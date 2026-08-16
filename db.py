@@ -121,43 +121,46 @@ def migrate_data(client, data):
 
 
 def fetch_all_data(client):
-    """Return the full portfolio as a nested dict, same shape the dashboard expects."""
+    """Return the full portfolio as a nested dict, same shape the dashboard expects.
+    Uses a handful of bulk queries instead of one query per fund/account, so this
+    scales well regardless of how many funds you're tracking."""
     agencies = client.execute("SELECT id, name FROM agencies ORDER BY name").fetchall()
+    accounts = client.execute("SELECT id, agency_id, name, cost_basis FROM accounts ORDER BY name").fetchall()
+    funds = client.execute("SELECT id, account_id, name, initial_cost_basis FROM funds ORDER BY name").fetchall()
+    entries = client.execute("SELECT entity_type, entity_id, date, value FROM entries ORDER BY date").fetchall()
+    contribs = client.execute("SELECT fund_id, date, amount FROM contributions ORDER BY date").fetchall()
+
+    # group entries by (type, id), contributions by fund_id
+    fund_entries, account_entries = {}, {}
+    for etype, eid, date, value in entries:
+        bucket = fund_entries if etype == "fund" else account_entries
+        bucket.setdefault(eid, []).append({"date": date, "value": value})
+    fund_contribs = {}
+    for fund_id, date, amount in contribs:
+        fund_contribs.setdefault(fund_id, []).append({"date": date, "amount": amount})
+
+    accounts_by_agency = {}
+    for acc_id, agency_id, acc_name, acc_cost in accounts:
+        accounts_by_agency.setdefault(agency_id, []).append((acc_id, acc_name, acc_cost))
+    funds_by_account = {}
+    for f_id, account_id, f_name, f_cost in funds:
+        funds_by_account.setdefault(account_id, []).append((f_id, f_name, f_cost))
+
     result = {"agencies": []}
     for a_id, a_name in agencies:
-        accounts = client.execute(
-            "SELECT id, name, cost_basis FROM accounts WHERE agency_id = ? ORDER BY name",
-            [a_id],
-        ).fetchall()
         acc_list = []
-        for acc_id, acc_name, acc_cost_basis in accounts:
-            funds = client.execute(
-                "SELECT id, name, initial_cost_basis FROM funds WHERE account_id = ? ORDER BY name",
-                [acc_id],
-            ).fetchall()
+        for acc_id, acc_name, acc_cost_basis in accounts_by_agency.get(a_id, []):
             fund_list = []
-            for f_id, f_name, f_cost in funds:
-                series = client.execute(
-                    "SELECT date, value FROM entries WHERE entity_type='fund' AND entity_id=? ORDER BY date",
-                    [f_id],
-                ).fetchall()
-                contribs = client.execute(
-                    "SELECT date, amount FROM contributions WHERE fund_id=? ORDER BY date",
-                    [f_id],
-                ).fetchall()
+            for f_id, f_name, f_cost in funds_by_account.get(acc_id, []):
                 fund_list.append({
                     "id": f_id, "name": f_name, "costBasis": f_cost,
-                    "series": [{"date": d, "value": v} for d, v in series],
-                    "contributions": [{"date": d, "amount": v} for d, v in contribs],
+                    "series": fund_entries.get(f_id, []),
+                    "contributions": fund_contribs.get(f_id, []),
                 })
-            total_series = client.execute(
-                "SELECT date, value FROM entries WHERE entity_type='account' AND entity_id=? ORDER BY date",
-                [acc_id],
-            ).fetchall()
             acc_list.append({
                 "id": acc_id, "name": acc_name, "costBasis": acc_cost_basis,
                 "funds": fund_list,
-                "totalSeries": [{"date": d, "value": v} for d, v in total_series],
+                "totalSeries": account_entries.get(acc_id, []),
             })
         result["agencies"].append({"id": a_id, "name": a_name, "accounts": acc_list})
     return result

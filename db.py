@@ -129,6 +129,33 @@ def fetch_all_data(client):
     return result
 
 
+def migrate_data(client, data):
+    """Load a consolidated data.json-shaped dict into the database.
+    Used both by the CLI migration script and the in-app uploader."""
+    count = 0
+    for agency in data["agencies"]:
+        agency_id = get_or_create_agency(client, agency["name"])
+        for account in agency["accounts"]:
+            account_id = get_or_create_account(
+                client, agency_id, account["name"], account.get("costBasis")
+            )
+            if account["funds"]:
+                for fund in account["funds"]:
+                    fund_id = get_or_create_fund(
+                        client, account_id, fund["name"], fund.get("costBasis") or 0
+                    )
+                    for point in fund["series"]:
+                        upsert_entry(client, "fund", fund_id, point["date"], point["value"])
+                        count += 1
+                    for c in fund.get("contributions", []):
+                        add_contribution(client, fund_id, c["date"], c["amount"])
+            else:
+                for point in account["totalSeries"]:
+                    upsert_entry(client, "account", account_id, point["date"], point["value"])
+                    count += 1
+    return count
+
+
 def log_backup(client):
     import datetime
     client.execute(

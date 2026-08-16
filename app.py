@@ -5,8 +5,9 @@ import streamlit as st
 
 from db import (
     get_client, init_schema, fetch_all_data, upsert_entry, add_contribution,
-    get_or_create_fund, log_backup, last_backup_time,
+    get_or_create_fund, log_backup, last_backup_time, migrate_data,
 )
+import json as _json
 
 st.set_page_config(page_title="Unit Trust Portfolio Tracker", layout="wide")
 
@@ -292,6 +293,18 @@ else:
             add_contribution(client, fund_id, entry_date.isoformat(), contrib_amount, contrib_note or None)
         load_data.clear()
         st.success(f"Saved {len(values)} fund value(s) for {entry_date.isoformat()}.")
+
+    st.markdown("---")
+    with st.expander("⚙️ One-time: import existing data.json"):
+        st.caption("Only needed once, to load your historical Excel data. "
+                   "Don't upload data.json to a public GitHub repo — use this instead.")
+        uploaded = st.file_uploader("Upload data.json", type="json")
+        if uploaded is not None and st.button("Run import"):
+            client = _client()
+            payload = _json.load(uploaded)
+            n = migrate_data(client, payload)
+            load_data.clear()
+            st.success(f"Imported {n} value entries.")
 
     st.markdown("---")
     st.markdown("**Backup**")

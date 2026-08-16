@@ -39,7 +39,7 @@ def _client():
     init_schema(c)
     return c
 
-@st.cache_data(ttl=30)
+@st.cache_data(show_spinner="Loading portfolio...")
 def load_data():
     return fetch_all_data(_client())
 
@@ -116,6 +116,9 @@ if "sel" not in st.session_state:
     st.session_state.sel = {"level": "overview"}
 
 st.sidebar.title("Portfolio tracker")
+if st.sidebar.button("🔄 Refresh data", use_container_width=True):
+    load_data.clear()
+    st.rerun()
 page = st.sidebar.radio("Page", ["Dashboard", "Weekly entry"], label_visibility="collapsed")
 
 if page == "Dashboard":
@@ -172,13 +175,18 @@ if page == "Dashboard":
         period_change = total_gain - first_gain
         period_change_pct = (period_change / first["cost"] * 100) if first["cost"] else 0
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Invested", rm(last["cost"]))
-        c2.metric("Current value", rm(last["value"]))
-        c3.metric("Gain since start", rm(total_gain), pct(total_gain_pct))
         if range_key == "All":
-            c4.metric(f"Change ({range_key})", rm(period_change))
+            # "Change (All)" would just duplicate "Gain since start" here — both
+            # measure from inception — so show 3 cards instead of a redundant 4th
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Invested", rm(last["cost"]))
+            c2.metric("Current value", rm(last["value"]))
+            c3.metric("Gain since start", rm(total_gain), pct(total_gain_pct))
         else:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Invested", rm(last["cost"]))
+            c2.metric("Current value", rm(last["value"]))
+            c3.metric("Gain since start", rm(total_gain), pct(total_gain_pct))
             c4.metric(f"Change ({range_key})", rm(period_change), pct(period_change_pct))
 
         df = pd.DataFrame(series)
@@ -217,7 +225,8 @@ if page == "Dashboard":
             heading = None
 
         if breakdown_items and heading:
-            st.markdown(f"**{heading} · change over {range_key}**")
+            label = "Gain (lifetime)" if range_key == "All" else f"Change ({range_key})"
+            st.markdown(f"**{heading} · {'lifetime gain' if range_key=='All' else f'change over {range_key}'}**")
             rows = []
             for name, s in breakdown_items:
                 l, f = s[-1], s[0]
@@ -225,7 +234,7 @@ if page == "Dashboard":
                 chg_rm = l_gain - f_gain
                 chg_pct = (chg_rm / f["cost"] * 100) if f["cost"] else 0
                 rows.append({"Name": name, "Invested": rm(l["cost"]), "Value": rm(l["value"]),
-                             f"Change ({range_key})": rm(chg_rm) if range_key == "All" else pct(chg_pct)})
+                             label: rm(chg_rm) if range_key == "All" else pct(chg_pct)})
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         st.markdown("**History**")

@@ -10,6 +10,26 @@ from db import (
 
 st.set_page_config(page_title="Unit Trust Portfolio Tracker", layout="wide")
 
+# ---------- access gate ----------
+# Since this app is deployed as "public" (Streamlit Cloud's free tier allows
+# only one private app), we gate access with a passcode stored in secrets.
+
+def check_passcode():
+    if st.session_state.get("authenticated", False):
+        return True
+    st.title("Unit Trust Portfolio Tracker")
+    pw = st.text_input("Enter passcode", type="password")
+    if st.button("Enter"):
+        if pw == st.secrets.get("APP_PASSCODE", None):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect passcode.")
+    return False
+
+if not check_passcode():
+    st.stop()
+
 # ---------- data helpers ----------
 
 @st.cache_resource
@@ -144,14 +164,21 @@ if page == "Dashboard":
         last, first = series[-1], series[0]
         total_gain = last["value"] - last["cost"]
         total_gain_pct = (total_gain / last["cost"] * 100) if last["cost"] else 0
-        period_change = last["value"] - first["value"]
-        period_change_pct = (period_change / first["value"] * 100) if first["value"] else 0
+        first_gain = first["value"] - first["cost"]
+        # period change = movement in *unrealised gain*, not raw value — this cancels out
+        # the effect of new money entering during the window (top-ups or newly added
+        # agencies), so it reflects actual market performance over the period, not cash flow
+        period_change = total_gain - first_gain
+        period_change_pct = (period_change / first["cost"] * 100) if first["cost"] else 0
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Invested", rm(last["cost"]))
         c2.metric("Current value", rm(last["value"]))
         c3.metric("Gain since start", rm(total_gain), pct(total_gain_pct))
-        c4.metric(f"Change ({range_key})", rm(period_change), pct(period_change_pct))
+        if range_key == "All":
+            c4.metric(f"Change ({range_key})", rm(period_change))
+        else:
+            c4.metric(f"Change ({range_key})", rm(period_change), pct(period_change_pct))
 
         df = pd.DataFrame(series)
         fig = go.Figure()
@@ -193,9 +220,11 @@ if page == "Dashboard":
             rows = []
             for name, s in breakdown_items:
                 l, f = s[-1], s[0]
-                chg_pct = (l["value"] - f["value"]) / f["value"] * 100 if f["value"] else 0
+                l_gain, f_gain = l["value"] - l["cost"], f["value"] - f["cost"]
+                chg_rm = l_gain - f_gain
+                chg_pct = (chg_rm / f["cost"] * 100) if f["cost"] else 0
                 rows.append({"Name": name, "Invested": rm(l["cost"]), "Value": rm(l["value"]),
-                             f"Change ({range_key})": pct(chg_pct)})
+                             f"Change ({range_key})": rm(chg_rm) if range_key == "All" else pct(chg_pct)})
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         st.markdown("**History**")
